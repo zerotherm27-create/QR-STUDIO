@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "admin:bootstrap": "node scripts/bootstrap-admin.mjs",
+    "qr:assign-legacy": "node scripts/assign-legacy-qrs.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

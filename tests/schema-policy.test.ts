@@ -15,8 +15,9 @@ describe("database authorization schema", () => {
     expect(schema).toContain(fragment);
   });
 
-  it("keeps legacy QR ownership nullable during migration", () => {
-    expect(schema).not.toMatch(/owner_id uuid not null/);
+  it("keeps the fresh schema in its final canonical ownership state", () => {
+    expect(schema).toMatch(/owner_id uuid not null/);
+    expect(schema).not.toContain("edit_token");
   });
 
   it("has owner and administrator policies without anonymous policies", () => {

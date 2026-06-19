@@ -94,6 +94,52 @@ as $$
   );
 $$;
 
+create or replace function private.set_user_role(
+  p_user_id uuid,
+  p_role text
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_role text;
+  administrator_count integer;
+begin
+  if p_role not in ('admin', 'user') then
+    raise exception 'Role must be admin or user.';
+  end if;
+
+  perform pg_advisory_xact_lock(71623041);
+
+  select role
+  into current_role
+  from public.profiles
+  where id = p_user_id
+  for update;
+
+  if not found then
+    raise exception 'Profile not found.';
+  end if;
+
+  if current_role = 'admin' and p_role = 'user' then
+    select count(*)
+    into administrator_count
+    from public.profiles
+    where role = 'admin';
+
+    if administrator_count <= 1 then
+      raise exception 'Cannot demote the last administrator.';
+    end if;
+  end if;
+
+  update public.profiles
+  set role = p_role
+  where id = p_user_id;
+end;
+$$;
+
 create or replace function private.record_qr_scan(
   p_slug text,
   p_user_agent text default null,
@@ -209,6 +255,10 @@ revoke all on function private.set_updated_at() from public, anon, authenticated
 revoke all on function private.handle_new_user() from public, anon, authenticated;
 revoke all on function private.is_admin() from public, anon;
 grant execute on function private.is_admin() to authenticated, service_role;
+revoke all on function private.set_user_role(uuid, text)
+  from public, anon, authenticated;
+grant execute on function private.set_user_role(uuid, text)
+  to service_role;
 revoke all on function private.record_qr_scan(text, text, text, text)
   from public, anon, authenticated;
 grant execute on function private.record_qr_scan(text, text, text, text)
