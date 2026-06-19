@@ -1,13 +1,17 @@
 "use client";
 
 import {
+  CheckCircle2,
   Download,
   ImagePlus,
+  Link2,
+  Loader2,
   Mail,
   Palette,
   Phone,
   QrCode,
   RotateCcw,
+  Save,
   Smartphone,
   Type,
   Wifi,
@@ -17,6 +21,18 @@ import QRCode from "qrcode";
 
 type QrKind = "url" | "text" | "email" | "phone" | "sms" | "wifi" | "vcard";
 type ErrorLevel = "L" | "M" | "Q" | "H";
+
+type SavedQr = {
+  createdAt: string;
+  destinationUrl: string;
+  ownerId: string | null;
+  scanCount: number;
+  shortUrl: string;
+  slug: string;
+  status: "active" | "disabled";
+  title: string | null;
+  updatedAt: string;
+};
 
 const qrKinds: Array<{ id: QrKind; label: string; icon: typeof Type }> = [
   { id: "url", label: "URL", icon: QrCode },
@@ -92,9 +108,55 @@ function buildPayload(kind: QrKind, form: typeof defaultForm) {
   }
 }
 
-export default function Home() {
+function normalizeUrlInput(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    return new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`).toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+async function fetchJsonWithTimeout<T>(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 8000,
+) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    const result = (await response.json()) as T & { error?: string };
+
+    if (!response.ok) {
+      throw new Error(result.error ?? "Request failed.");
+    }
+
+    return result;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Request timed out. Check the local server or database connection.");
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+export function QrGenerator() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dynamicQr, setDynamicQr] = useState<SavedQr | null>(null);
   const [kind, setKind] = useState<QrKind>("url");
   const [form, setForm] = useState(defaultForm);
   const [foreground, setForeground] = useState("#101820");
@@ -106,8 +168,19 @@ export default function Home() {
   const [logo, setLogo] = useState<string | null>(null);
   const [logoScale, setLogoScale] = useState(18);
   const [previewData, setPreviewData] = useState("");
+  const [dynamicStatus, setDynamicStatus] = useState("");
+  const [dynamicError, setDynamicError] = useState("");
+  const [isSavingDynamic, setIsSavingDynamic] = useState(false);
+  const [linkTitle, setLinkTitle] = useState("");
+  const [copyStatus, setCopyStatus] = useState("");
 
   const payload = useMemo(() => buildPayload(kind, form), [kind, form]);
+  const activePayload =
+    kind === "url" && dynamicQr ? dynamicQr.shortUrl : payload;
+  const dynamicSelectionChanged =
+    Boolean(dynamicQr) &&
+    (normalizeUrlInput(form.url) !== dynamicQr?.destinationUrl ||
+      linkTitle.trim() !== (dynamicQr?.title ?? ""));
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +189,7 @@ export default function Home() {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      await QRCode.toCanvas(canvas, payload, {
+      await QRCode.toCanvas(canvas, activePayload, {
         width: size,
         margin,
         errorCorrectionLevel: errorLevel,
@@ -157,7 +230,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [accent, background, errorLevel, foreground, logo, logoScale, margin, payload, size]);
+  }, [activePayload, background, errorLevel, foreground, logo, logoScale, margin, size]);
 
   function updateField(name: keyof typeof defaultForm, value: string) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -171,6 +244,77 @@ export default function Home() {
     reader.readAsDataURL(file);
   }
 
+  async function saveDynamicLink() {
+    setIsSavingDynamic(true);
+    setDynamicError("");
+    setDynamicStatus("");
+
+    try {
+      const result = await fetchJsonWithTimeout<SavedQr>("/api/qr", {
+        body: JSON.stringify({
+          destinationUrl: form.url,
+          title: linkTitle,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+
+      setDynamicQr(result);
+      setForm((current) => ({ ...current, url: result.destinationUrl }));
+      setLinkTitle(result.title ?? "");
+      setDynamicStatus("Saved to My QR Codes.");
+    } catch (error) {
+      setDynamicError(error instanceof Error ? error.message : "Could not create dynamic link.");
+    } finally {
+      setIsSavingDynamic(false);
+    }
+  }
+
+  async function updateDynamicLink() {
+    if (!dynamicQr) return;
+
+    setIsSavingDynamic(true);
+    setDynamicError("");
+    setDynamicStatus("");
+
+    try {
+      const result = await fetchJsonWithTimeout<SavedQr>(`/api/qr/${dynamicQr.slug}`, {
+        body: JSON.stringify({
+          destinationUrl: form.url,
+          title: linkTitle,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "PATCH",
+      });
+
+      setDynamicQr(result);
+      setForm((current) => ({ ...current, url: result.destinationUrl }));
+      setLinkTitle(result.title ?? "");
+      setDynamicStatus("Destination updated.");
+    } catch (error) {
+      setDynamicError(error instanceof Error ? error.message : "Could not update dynamic link.");
+    } finally {
+      setIsSavingDynamic(false);
+    }
+  }
+
+  function clearDynamicLink() {
+    setDynamicQr(null);
+    setDynamicStatus("");
+    setDynamicError("");
+    setCopyStatus("");
+  }
+
+  async function copyDynamicLink() {
+    if (!dynamicQr) return;
+    await navigator.clipboard.writeText(dynamicQr.shortUrl);
+    setCopyStatus("Copied.");
+  }
+
   function downloadPng() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -181,7 +325,7 @@ export default function Home() {
   }
 
   async function downloadSvg() {
-    const svg = await QRCode.toString(payload, {
+    const svg = await QRCode.toString(activePayload, {
       type: "svg",
       margin,
       errorCorrectionLevel: errorLevel,
@@ -216,23 +360,24 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f1ea] text-[#111827]">
-      <div className="mx-auto grid min-h-screen w-full max-w-7xl grid-cols-1 gap-8 px-5 py-6 lg:grid-cols-[minmax(0,1fr)_430px] lg:px-8">
-        <section className="flex flex-col gap-5">
-          <header className="flex flex-col gap-4 border-b border-[#d9d4c8] pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <main className="app-shell">
+      <div className="studio-grid">
+        <section className="control-stack">
+          <header className="studio-header">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#8a4f2d]">
-                QR Studio
-              </p>
-              <h1 className="mt-2 text-4xl font-semibold tracking-normal text-[#111827] sm:text-5xl">
-                Custom QR generator
+              <p className="studio-kicker">QR Studio</p>
+              <h1 className="studio-title">
+                Dynamic QR generator
               </h1>
+              <p className="studio-subtitle">
+                Build branded codes, publish editable short links, and keep scans measurable.
+              </p>
             </div>
-            <div className="flex gap-2">
+            <div className="header-actions">
               <button
                 type="button"
                 onClick={resetDesign}
-                className="inline-flex h-11 items-center gap-2 rounded-md border border-[#c8c1b4] bg-white px-4 text-sm font-semibold text-[#111827] shadow-sm transition hover:bg-[#faf9f6]"
+                className="btn btn-secondary"
               >
                 <RotateCcw size={17} />
                 Reset
@@ -240,7 +385,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={downloadPng}
-                className="inline-flex h-11 items-center gap-2 rounded-md bg-[#111827] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#263246]"
+                className="btn btn-primary"
               >
                 <Download size={17} />
                 PNG
@@ -248,7 +393,7 @@ export default function Home() {
             </div>
           </header>
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="qr-tabs" role="tablist" aria-label="QR content type">
             {qrKinds.map((item) => {
               const Icon = item.icon;
               const active = kind === item.id;
@@ -257,11 +402,8 @@ export default function Home() {
                   key={item.id}
                   type="button"
                   onClick={() => setKind(item.id)}
-                  className={`flex h-16 items-center justify-center gap-2 rounded-md border text-sm font-semibold transition ${
-                    active
-                      ? "border-[#111827] bg-[#111827] text-white shadow-sm"
-                      : "border-[#d9d4c8] bg-white text-[#374151] hover:border-[#a8a092]"
-                  }`}
+                  className={`qr-tab ${active ? "qr-tab-active" : ""}`}
+                  aria-pressed={active}
                 >
                   <Icon size={17} />
                   {item.label}
@@ -270,15 +412,100 @@ export default function Home() {
             })}
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
-            <section className="rounded-md border border-[#d9d4c8] bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2">
+          <div className="editor-grid">
+            <section className="panel panel-content">
+              <div className="panel-title">
                 <QrCode size={20} />
                 <h2 className="text-lg font-semibold">Content</h2>
               </div>
               <div className="grid gap-4">
                 {kind === "url" && (
-                  <Field label="URL" value={form.url} onChange={(value) => updateField("url", value)} />
+                  <>
+                    <Field label="Destination URL" value={form.url} onChange={(value) => updateField("url", value)} />
+                    <Field label="Link title" value={linkTitle} onChange={setLinkTitle} />
+                    <div className="dynamic-card">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="card-label">
+                            Dynamic short link
+                          </p>
+                          <p className="payload-text mt-1">
+                            {dynamicQr?.shortUrl ?? "Create one to make this QR editable after download or printing."}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          {!dynamicQr && (
+                            <button
+                              type="button"
+                              onClick={saveDynamicLink}
+                              disabled={isSavingDynamic}
+                              className="btn btn-primary btn-compact"
+                            >
+                              {isSavingDynamic ? <Loader2 className="animate-spin" size={16} /> : <Link2 size={16} />}
+                              Create
+                            </button>
+                          )}
+                          {dynamicQr && dynamicSelectionChanged && (
+                            <button
+                              type="button"
+                              onClick={updateDynamicLink}
+                              disabled={isSavingDynamic}
+                              className="btn btn-primary btn-compact"
+                            >
+                              {isSavingDynamic ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                              Update
+                            </button>
+                          )}
+                          {dynamicQr && (
+                            <button
+                              type="button"
+                              onClick={copyDynamicLink}
+                              className="btn btn-secondary btn-compact"
+                            >
+                              Copy link
+                            </button>
+                          )}
+                          {dynamicQr && (
+                            <button
+                              type="button"
+                              onClick={clearDynamicLink}
+                              className="btn btn-secondary btn-compact"
+                            >
+                              Direct
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {dynamicQr && (
+                        <>
+                          <div className="status-grid">
+                            <span className="inline-flex items-center gap-1">
+                              <CheckCircle2 size={14} />
+                              QR points to the stable short link
+                            </span>
+                            <span>Scans recorded: {dynamicQr.scanCount}</span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm font-semibold">
+                            <a href={`/dashboard/qr/${dynamicQr.slug}`}>
+                              Open dashboard item
+                            </a>
+                            <a href="/dashboard">View My QR Codes</a>
+                            {copyStatus ? <span aria-live="polite">{copyStatus}</span> : null}
+                          </div>
+                        </>
+                      )}
+                      {dynamicStatus && (
+                        <p className="status-message status-success" aria-live="polite">
+                          {dynamicStatus}
+                        </p>
+                      )}
+                      {dynamicError && (
+                        <p className="status-message status-error" aria-live="polite">
+                          {dynamicError}
+                        </p>
+                      )}
+                    </div>
+                  </>
                 )}
                 {kind === "text" && (
                   <label className="grid gap-2 text-sm font-semibold text-[#374151]">
@@ -287,7 +514,7 @@ export default function Home() {
                       value={form.text}
                       onChange={(event) => updateField("text", event.target.value)}
                       rows={8}
-                      className="min-h-48 resize-y rounded-md border border-[#cfc8ba] px-3 py-3 text-base font-normal outline-none transition focus:border-[#111827] focus:ring-2 focus:ring-[#f2c94c]"
+                      className="control-input min-h-48 resize-y py-3"
                     />
                   </label>
                 )}
@@ -311,12 +538,12 @@ export default function Home() {
                   <>
                     <Field label="Network" value={form.ssid} onChange={(value) => updateField("ssid", value)} />
                     <Field label="Password" value={form.password} onChange={(value) => updateField("password", value)} />
-                    <label className="grid gap-2 text-sm font-semibold text-[#374151]">
+                    <label className="field-label">
                       Security
                       <select
                         value={form.encryption}
                         onChange={(event) => updateField("encryption", event.target.value)}
-                        className="h-11 rounded-md border border-[#cfc8ba] bg-white px-3 text-base font-normal outline-none transition focus:border-[#111827] focus:ring-2 focus:ring-[#f2c94c]"
+                        className="control-input h-11"
                       >
                         <option value="WPA">WPA/WPA2</option>
                         <option value="WEP">WEP</option>
@@ -341,8 +568,8 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="rounded-md border border-[#d9d4c8] bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2">
+            <section className="panel panel-design">
+              <div className="panel-title">
                 <Palette size={20} />
                 <h2 className="text-lg font-semibold">Design</h2>
               </div>
@@ -357,7 +584,7 @@ export default function Home() {
                         setBackground(preset.bg);
                         setAccent(preset.accent);
                       }}
-                      className="flex h-12 items-center gap-3 rounded-md border border-[#d9d4c8] bg-white px-3 text-sm font-semibold transition hover:border-[#111827]"
+                      className="preset-button"
                     >
                       <span className="flex -space-x-1">
                         <span className="h-5 w-5 rounded-full border border-white" style={{ background: preset.fg }} />
@@ -374,12 +601,12 @@ export default function Home() {
                 </div>
                 <RangeField label="Size" value={size} min={420} max={1200} step={20} unit="px" onChange={setSize} />
                 <RangeField label="Margin" value={margin} min={0} max={6} step={1} onChange={setMargin} />
-                <label className="grid gap-2 text-sm font-semibold text-[#374151]">
+                <label className="field-label">
                   Correction
                   <select
                     value={errorLevel}
                     onChange={(event) => setErrorLevel(event.target.value as ErrorLevel)}
-                    className="h-11 rounded-md border border-[#cfc8ba] bg-white px-3 text-base font-normal outline-none transition focus:border-[#111827] focus:ring-2 focus:ring-[#f2c94c]"
+                    className="control-input h-11"
                   >
                     <option value="L">Low</option>
                     <option value="M">Medium</option>
@@ -392,7 +619,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-[#c8c1b4] bg-white px-4 text-sm font-semibold text-[#111827] shadow-sm transition hover:bg-[#faf9f6]"
+                    className="btn btn-secondary justify-center"
                   >
                     <ImagePlus size={17} />
                     Logo
@@ -406,24 +633,24 @@ export default function Home() {
           </div>
         </section>
 
-        <aside className="lg:sticky lg:top-6 lg:self-start">
-          <section className="rounded-md border border-[#d9d4c8] bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between gap-3">
+        <aside className="preview-rail">
+          <section className="panel preview-panel">
+            <div className="preview-header">
               <div>
                 <h2 className="text-lg font-semibold">Preview</h2>
-                <p className="mt-1 text-sm text-[#6b7280]">{payload.length} characters</p>
+                <p className="mt-1 text-sm text-[var(--muted)]">{activePayload.length} characters</p>
               </div>
               <button
                 type="button"
                 onClick={downloadSvg}
-                className="inline-flex h-10 items-center gap-2 rounded-md border border-[#c8c1b4] bg-white px-3 text-sm font-semibold text-[#111827] shadow-sm transition hover:bg-[#faf9f6]"
+                className="btn btn-secondary btn-compact"
               >
                 <Download size={16} />
                 SVG
               </button>
             </div>
             <div
-              className="grid aspect-square w-full max-w-full place-items-center overflow-hidden rounded-md border p-5"
+              className="qr-preview-frame"
               style={{ borderColor: accent, background }}
             >
               {previewData && (
@@ -436,9 +663,9 @@ export default function Home() {
               )}
               <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
             </div>
-            <div className="mt-4 rounded-md border border-[#e6e0d5] bg-[#faf9f6] p-3">
-              <p className="line-clamp-4 break-all font-mono text-xs leading-5 text-[#4b5563]">
-                {payload}
+            <div className="payload-box">
+              <p className="line-clamp-4 payload-text">
+                {activePayload}
               </p>
             </div>
           </section>
@@ -458,12 +685,12 @@ function Field({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-semibold text-[#374151]">
+    <label className="field-label">
       {label}
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-md border border-[#cfc8ba] px-3 text-base font-normal outline-none transition focus:border-[#111827] focus:ring-2 focus:ring-[#f2c94c]"
+        className="control-input h-11"
       />
     </label>
   );
@@ -479,16 +706,16 @@ function ColorField({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-semibold text-[#374151]">
+    <label className="field-label">
       {label}
-      <span className="flex h-11 items-center gap-2 rounded-md border border-[#cfc8ba] bg-white px-2">
+      <span className="color-control">
         <input
           type="color"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           className="h-7 w-8 cursor-pointer border-0 bg-transparent p-0"
         />
-        <span className="truncate font-mono text-xs font-normal text-[#4b5563]">{value}</span>
+        <span className="truncate font-mono text-xs font-normal text-[var(--muted)]">{value}</span>
       </span>
     </label>
   );
@@ -512,10 +739,10 @@ function RangeField({
   onChange: (value: number) => void;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-semibold text-[#374151]">
+    <label className="field-label">
       <span className="flex items-center justify-between">
         {label}
-        <span className="font-mono text-xs font-normal text-[#4b5563]">
+        <span className="font-mono text-xs font-normal text-[var(--muted)]">
           {value}
           {unit}
         </span>
@@ -527,7 +754,7 @@ function RangeField({
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="accent-[#111827]"
+        className="range-control"
       />
     </label>
   );
