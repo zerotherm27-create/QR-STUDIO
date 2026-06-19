@@ -36,6 +36,26 @@ https://qr.example.com/auth/update-password
 
 Invitation and recovery links return through `/auth/confirm`; invited users then choose a password at `/auth/update-password`.
 
+For reliable SSR sessions, customize the Supabase **Invite user** and
+**Reset password** email templates so their links send the token hash to the
+confirmation route. Use the appropriate type in each template:
+
+```html
+<!-- Invite user -->
+<a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=invite">
+  Accept invitation
+</a>
+
+<!-- Reset password -->
+<a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=recovery">
+  Reset password
+</a>
+```
+
+The confirmation route also accepts a PKCE `code` query parameter. Do not use a
+template that returns access tokens in a URL fragment because server routes
+cannot read fragments.
+
 ## First administrator and invitations
 
 There is no public sign-up. Create the first account in Supabase Auth, then promote that existing Auth user:
@@ -60,7 +80,7 @@ The script prints ownerless counts before and after assignment. Do not apply the
 
 ## Database migrations
 
-For an existing project, apply migrations in timestamp order:
+For a fresh project with no legacy QR rows, apply migrations normally:
 
 ```bash
 npx supabase db push
@@ -68,7 +88,17 @@ npx supabase migration list
 npx supabase db advisors
 ```
 
-The invite-only migration adds profiles, nullable legacy ownership, RLS, and the transaction-safe role function. The later finalization migration aborts if ownerless QR rows remain, then makes `owner_id` non-null and drops `edit_token`. `supabase/schema.sql` represents the canonical final schema for fresh projects.
+For an existing project that already has QR rows, first run
+`20260619092417_invite_only_auth.sql` through the Supabase SQL Editor. This
+idempotent migration adds nullable ownership and the authorization policies.
+Then create and bootstrap the first administrator, run
+`npm run qr:assign-legacy -- owner@example.com --confirm`, and only after the
+ownerless count reaches zero run `npx supabase db push`. The push can safely
+re-run the first migration and then applies the final ownership migration.
+
+The finalization migration aborts if ownerless QR rows remain, then makes
+`owner_id` non-null and drops `edit_token`. `supabase/schema.sql` represents
+the canonical final schema for fresh projects.
 
 Review and resolve database advisor findings before production deployment, especially security or RLS findings.
 

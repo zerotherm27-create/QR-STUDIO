@@ -94,7 +94,9 @@ function invitationRedirect(origin: string) {
       "VALIDATION",
     );
   }
-  return new URL("/auth/update-password", url).toString();
+  const confirmationUrl = new URL("/auth/confirm", url);
+  confirmationUrl.searchParams.set("next", "/auth/update-password");
+  return confirmationUrl.toString();
 }
 
 function isDuplicateInvitation(error: { code?: string; message: string; status?: number }) {

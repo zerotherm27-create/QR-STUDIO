@@ -72,7 +72,8 @@ describe("administrator service", () => {
     await inviteUser(" New.User@Example.com ", "https://qr.example/");
 
     expect(inviteUserByEmail).toHaveBeenCalledWith("new.user@example.com", {
-      redirectTo: "https://qr.example/auth/update-password",
+      redirectTo:
+        "https://qr.example/auth/confirm?next=%2Fauth%2Fupdate-password",
     });
     expect(profileBuilder.update).toHaveBeenCalledWith({ role: "user" });
     expect(profileBuilder.eq).toHaveBeenCalledWith("id", "user-2");
