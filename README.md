@@ -82,6 +82,34 @@ npm run build
 git diff --check
 ```
 
+### Browser permission tests
+
+Playwright covers anonymous route protection, the absence of public sign-up,
+cross-user isolation, administrator visibility, and the complete public-link
+lifecycle. Use disposable invited accounts in a non-production Supabase
+project:
+
+```dotenv
+E2E_USER_EMAIL=user-one@example.com
+E2E_USER_PASSWORD=a-test-password
+E2E_SECOND_USER_EMAIL=user-two@example.com
+E2E_SECOND_USER_PASSWORD=a-test-password
+E2E_ADMIN_EMAIL=admin@example.com
+E2E_ADMIN_PASSWORD=a-test-password
+```
+
+Export `.env.local` and the E2E variables into the shell, install the browser
+once, then run:
+
+```bash
+set -a; source .env.local; source .env.e2e.local; set +a
+npx playwright install chromium
+npm run test:e2e
+```
+
+Credential-dependent tests explicitly skip when these variables are absent.
+They never contain real credentials in source control.
+
 ## Permanence
 
 QR links have no automatic expiry and keep the same slug when their destination changes. “Permanent” still depends on continued operation of the deployment, Supabase project/database, and domain. Losing or retiring any of those can break printed QR codes, so maintain backups, billing, and domain renewal.
