@@ -2,6 +2,13 @@
 
 QR Studio is an invite-only platform for permanent, editable QR short links. Supabase Auth controls account access, Postgres stores ownership and scan data, and public `/q/{slug}` routes remain available without login.
 
+## Custom aliases
+
+URL QR codes can use an optional permanent custom alias such as
+`/q/my-business`. Aliases are globally unique, use 3–40 lowercase letters,
+numbers, and single hyphens, and cannot be changed after creation. Leave the
+field blank to generate the existing random short link.
+
 ## Environment
 
 Create `.env.local`:

@@ -48,11 +48,14 @@ export async function POST(request: Request) {
   try {
     const auth = await requireUser({ redirectToLogin: false });
     const body = (await request.json()) as {
+      customAlias?: unknown;
       destinationUrl?: unknown;
       title?: unknown;
     };
     const qr = await createQr(
       {
+        customAlias:
+          typeof body.customAlias === "string" ? body.customAlias : undefined,
         destinationUrl:
           typeof body.destinationUrl === "string" ? body.destinationUrl : "",
         title: typeof body.title === "string" ? body.title : undefined,

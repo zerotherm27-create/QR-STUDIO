@@ -59,13 +59,13 @@ describe("QrGenerator", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<QrGenerator />);
 
-    await userEvent.clear(screen.getByLabelText("Destination URL"));
-    await userEvent.type(
-      screen.getByLabelText("Destination URL"),
-      "destination.example",
-    );
-    await userEvent.type(screen.getByLabelText("Link title"), "Launch page");
-    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    fireEvent.change(screen.getByLabelText("Destination URL"), {
+      target: { value: "destination.example" },
+    });
+    fireEvent.change(screen.getByLabelText("Link title"), {
+      target: { value: "Launch page" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const [, request] = fetchMock.mock.calls[0];
@@ -74,6 +74,44 @@ describe("QrGenerator", () => {
       title: "Launch page",
     });
     expect(String(request.body)).not.toContain("editToken");
+  });
+
+  it("creates a permanent custom alias and locks it after creation", async () => {
+    const customQr = {
+      ...savedQr,
+      shortUrl: "https://qr.example/q/my-business",
+      slug: "my-business",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(customQr), {
+        headers: { "Content-Type": "application/json" },
+        status: 201,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QrGenerator />);
+
+    const aliasInput = screen.getByLabelText("Custom alias (optional)");
+    expect(
+      screen.getByText("The alias cannot be changed after creation."),
+    ).toBeVisible();
+
+    fireEvent.change(aliasInput, { target: { value: "My-Business" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const [, request] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(request.body))).toEqual({
+      customAlias: "my-business",
+      destinationUrl: "https://example.com",
+      title: "",
+    });
+    expect(aliasInput).toBeDisabled();
+    expect(aliasInput).toHaveValue("my-business");
+
+    fireEvent.click(screen.getByRole("button", { name: "Direct" }));
+    expect(aliasInput).toBeEnabled();
+    expect(aliasInput).toHaveValue("");
   });
 
   it("uses the returned stable short URL as the QR payload", async () => {

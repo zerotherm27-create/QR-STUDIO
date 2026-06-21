@@ -172,6 +172,7 @@ export function QrGenerator() {
   const [dynamicError, setDynamicError] = useState("");
   const [isSavingDynamic, setIsSavingDynamic] = useState(false);
   const [linkTitle, setLinkTitle] = useState("");
+  const [customAlias, setCustomAlias] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
 
   const payload = useMemo(() => buildPayload(kind, form), [kind, form]);
@@ -252,6 +253,7 @@ export function QrGenerator() {
     try {
       const result = await fetchJsonWithTimeout<SavedQr>("/api/qr", {
         body: JSON.stringify({
+          ...(customAlias ? { customAlias } : {}),
           destinationUrl: form.url,
           title: linkTitle,
         }),
@@ -264,6 +266,7 @@ export function QrGenerator() {
       setDynamicQr(result);
       setForm((current) => ({ ...current, url: result.destinationUrl }));
       setLinkTitle(result.title ?? "");
+      setCustomAlias(result.slug);
       setDynamicStatus("Saved to My QR Codes.");
     } catch (error) {
       setDynamicError(error instanceof Error ? error.message : "Could not create dynamic link.");
@@ -307,6 +310,7 @@ export function QrGenerator() {
     setDynamicStatus("");
     setDynamicError("");
     setCopyStatus("");
+    setCustomAlias("");
   }
 
   async function copyDynamicLink() {
@@ -423,6 +427,31 @@ export function QrGenerator() {
                   <>
                     <Field label="Destination URL" value={form.url} onChange={(value) => updateField("url", value)} />
                     <Field label="Link title" value={linkTitle} onChange={setLinkTitle} />
+                    <label className="field-label">
+                      Custom alias (optional)
+                      <input
+                        aria-label="Custom alias (optional)"
+                        className="control-input h-11"
+                        disabled={Boolean(dynamicQr)}
+                        maxLength={40}
+                        onChange={(event) =>
+                          setCustomAlias(
+                            event.target.value.toLowerCase().replace(/\s+/g, ""),
+                          )
+                        }
+                        pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+                        placeholder="my-business"
+                        value={customAlias}
+                      />
+                      <span className="payload-text">
+                        {customAlias
+                          ? `${customAlias} → /q/${customAlias}`
+                          : "Leave blank for a random short link."}
+                      </span>
+                      <span className="payload-text">
+                        The alias cannot be changed after creation.
+                      </span>
+                    </label>
                     <div className="dynamic-card">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>

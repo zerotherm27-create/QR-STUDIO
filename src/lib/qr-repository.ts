@@ -34,6 +34,20 @@ export class QrRepositoryError extends Error {
 const qrColumns =
   "slug, destination_url, title, owner_id, status, scan_count, created_at, updated_at";
 
+const reservedAliases = new Set([
+  "admin",
+  "api",
+  "auth",
+  "dashboard",
+  "login",
+  "logout",
+  "new",
+  "settings",
+  "signup",
+  "support",
+  "unavailable",
+]);
+
 function cleanTitle(title: string | undefined) {
   const value = title?.trim();
   return value ? value.slice(0, 200) : null;
@@ -41,6 +55,40 @@ function cleanTitle(title: string | undefined) {
 
 function createSlug() {
   return randomBytes(6).toString("base64url").slice(0, 8);
+}
+
+export function normalizeCustomAlias(value: string | undefined) {
+  const alias = value?.trim().toLowerCase();
+
+  if (!alias) {
+    return undefined;
+  }
+
+  if (alias.length < 3 || alias.length > 40) {
+    throw new QrRepositoryError(
+      "Alias must be 3–40 characters.",
+      422,
+      "VALIDATION",
+    );
+  }
+
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(alias)) {
+    throw new QrRepositoryError(
+      "Use lowercase letters, numbers, and single hyphens.",
+      422,
+      "VALIDATION",
+    );
+  }
+
+  if (reservedAliases.has(alias)) {
+    throw new QrRepositoryError(
+      "That alias is reserved.",
+      422,
+      "VALIDATION",
+    );
+  }
+
+  return alias;
 }
 
 function throwDatabaseError(message: string, error: { code?: string; message: string }) {
@@ -92,24 +140,50 @@ export function normalizeDestinationUrl(value: string) {
 }
 
 export async function createQr(
-  input: { destinationUrl: string; title?: string },
+  input: {
+    customAlias?: string;
+    destinationUrl: string;
+    title?: string;
+  },
   auth: AuthContext,
 ): Promise<QrCode> {
   const supabase = await createServerClient();
   const destinationUrl = normalizeDestinationUrl(input.destinationUrl);
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const { data, error } = await supabase
+  const customAlias = normalizeCustomAlias(input.customAlias);
+  const insertQr = async (slug: string) =>
+    supabase
       .from("qr_codes")
       .insert({
         destination_url: destinationUrl,
         owner_id: auth.userId,
-        slug: createSlug(),
+        slug,
         status: "active",
         title: cleanTitle(input.title),
       })
       .select(qrColumns)
       .single();
+
+  if (customAlias) {
+    const { data, error } = await insertQr(customAlias);
+
+    if (data) {
+      return mapQrRow(data as QrRow);
+    }
+    if (!error) {
+      throw new Error("Supabase did not return the created QR record.");
+    }
+    if (error.code === "23505") {
+      throw new QrRepositoryError(
+        "That alias is already in use.",
+        409,
+        "CONFLICT",
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data, error } = await insertQr(createSlug());
 
     if (data) {
       return mapQrRow(data as QrRow);

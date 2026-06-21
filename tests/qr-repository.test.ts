@@ -56,6 +56,27 @@ describe("QR repository", () => {
     );
   });
 
+  it("normalizes valid custom aliases", async () => {
+    const { normalizeCustomAlias } = await import("@/src/lib/qr-repository");
+
+    expect(normalizeCustomAlias(undefined)).toBeUndefined();
+    expect(normalizeCustomAlias("  My-Business  ")).toBe("my-business");
+  });
+
+  it.each([
+    ["ab", "3–40"],
+    ["a".repeat(41), "3–40"],
+    ["my--business", "single hyphens"],
+    ["-business", "single hyphens"],
+    ["business-", "single hyphens"],
+    ["my_business", "single hyphens"],
+    ["Admin", "reserved"],
+  ])("rejects invalid custom alias %s", async (alias, message) => {
+    const { normalizeCustomAlias } = await import("@/src/lib/qr-repository");
+
+    expect(() => normalizeCustomAlias(alias)).toThrow(message);
+  });
+
   it("assigns ownership from auth instead of request input", async () => {
     const builder = queryBuilder({
       data: {
@@ -89,6 +110,64 @@ describe("QR repository", () => {
     expect(builder.insert).not.toHaveBeenCalledWith(
       expect.objectContaining({ owner_id: "attacker-controlled" }),
     );
+  });
+
+  it("uses a normalized custom alias as the slug", async () => {
+    const builder = queryBuilder({
+      data: {
+        created_at: "2026-06-19T00:00:00.000Z",
+        destination_url: "https://example.com/",
+        owner_id: "owner-1",
+        scan_count: 0,
+        slug: "my-business",
+        status: "active",
+        title: null,
+        updated_at: "2026-06-19T00:00:00.000Z",
+      },
+      error: null,
+    });
+    createServerClientMock.mockResolvedValue({
+      from: vi.fn(() => builder),
+    });
+    const { createQr } = await import("@/src/lib/qr-repository");
+
+    await createQr(
+      {
+        customAlias: " My-Business ",
+        destinationUrl: "https://example.com",
+      } as never,
+      userAuth,
+    );
+
+    expect(builder.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: "my-business" }),
+    );
+  });
+
+  it("reports a duplicate custom alias as a conflict", async () => {
+    const builder = queryBuilder({
+      data: null,
+      error: { code: "23505", message: "duplicate key" },
+    });
+    createServerClientMock.mockResolvedValue({
+      from: vi.fn(() => builder),
+    });
+    const { createQr } = await import("@/src/lib/qr-repository");
+
+    await expect(
+      createQr(
+        {
+          customAlias: "my-business",
+          destinationUrl: "https://example.com",
+        } as never,
+        userAuth,
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "That alias is already in use.",
+      status: 409,
+    });
+    expect(builder.insert).toHaveBeenCalledTimes(1);
   });
 
   it("filters regular-user lists by owner", async () => {
